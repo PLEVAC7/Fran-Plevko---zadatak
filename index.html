@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="hr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nestiom IoT Upravljanje</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f4f7f6; padding: 20px; }
+        .card { margin-bottom: 20px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        #control-panel { display: none; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2 class="text-center mb-4">ZADATAK</h2>
+
+    <div id="auth-section" class="card p-4">
+        <h3>Prijava / Registracija</h3>
+        <input type="email" id="email" class="form-control mb-2" placeholder="Email">
+        <input type="password" id="password" class="form-control mb-2" placeholder="Lozinka">
+        <button class="btn btn-primary w-100 mb-2" onclick="handleSignUp()">Registriraj se</button>
+        <button class="btn btn-outline-primary w-100" onclick="handleLogin()">Prijavi se</button>
+    </div>
+
+    <div id="control-panel">
+        <div class="d-flex justify-content-end mb-3">
+            <button class="btn btn-danger btn-sm" onclick="handleLogout()">Odjavi se</button>
+        </div>
+
+        <div class="card p-4">
+            <h4>Poveži uređaj</h4>
+            <div class="input-group mb-3">
+                <input type="text" id="esp-id-input" class="form-control" placeholder="Unesi ID ESP32 (npr. esp32_01)">
+                <button class="btn btn-success" onclick="linkDevice()">Spremi uređaj</button>
+            </div>
+            <p>Povezani uređaj: <strong id="current-esp-id">Nema</strong></p>
+        </div>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div class="card p-4 text-center">
+                    <h5>Upravljanje Aktuatorom (LED)</h5>
+                    <button id="led-btn" class="btn btn-secondary btn-lg" onclick="toggleLED()">Učitavam...</button>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="card p-4 text-center">
+                    <h5>Očitanje Senzora</h5>
+                    <button class="btn btn-info btn-lg mb-3" onclick="requestSensorData()">Pročitaj Senzor</button>
+                    <h4>Vrijednost: <span id="sensor-val">--</span></h4>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+    // DODAN signOut U IMPORT
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+    import { getDatabase, ref, set, update, onValue } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js";
+
+    // TVOJA KONFIGURACIJA
+    const firebaseConfig = {
+        apiKey: "AIzaSyALtyYNh30btw4WRfUEdvWBtZ0MBhy1UKU",
+        authDomain: "zadatak-94235.firebaseapp.com",
+        databaseURL: "https://zadatak-94235-default-rtdb.europe-west1.firebasedatabase.app",
+        projectId: "zadatak-94235",
+        storageBucket: "zadatak-94235.appspot.com",
+        messagingSenderId: "142050245959",
+        appId: "1:142050245959:web:9b60e79ca0a1a25632a062"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    let currentUserId = null;
+    let connectedEspId = null;
+
+    // --- AUTENTIFIKACIJA ---
+    window.handleSignUp = () => {
+        const email = document.getElementById('email').value;
+        const pass = document.getElementById('password').value;
+        createUserWithEmailAndPassword(auth, email, pass).catch(err => alert(err.message));
+    };
+
+    window.handleLogin = () => {
+        const email = document.getElementById('email').value;
+        const pass = document.getElementById('password').value;
+        signInWithEmailAndPassword(auth, email, pass).catch(err => alert(err.message));
+    };
+
+    // LOGIKA ZA ODJAVU
+    window.handleLogout = () => {
+        signOut(auth).then(() => {
+            window.location.reload(); // Osvježi stranicu nakon odjave
+        }).catch(err => alert(err.message));
+    };
+
+    onAuthStateChanged(auth, (user) => {
+        if (user) {
+            currentUserId = user.uid;
+            document.getElementById('auth-section').style.display = 'none';
+            document.getElementById('control-panel').style.display = 'block';
+            fetchUserDevice();
+        } else {
+            // Ako korisnik nije prijavljen, osiguraj da vidi samo auth-section
+            document.getElementById('auth-section').style.display = 'block';
+            document.getElementById('control-panel').style.display = 'none';
+        }
+    });
+
+    // --- LOGIKA UREĐAJA ---
+    window.linkDevice = () => {
+        const espId = document.getElementById('esp-id-input').value;
+        if(!espId) return;
+        set(ref(db, `users/${currentUserId}`), { esp_id: espId });
+    };
+
+    function fetchUserDevice() {
+        onValue(ref(db, `users/${currentUserId}/esp_id`), (snapshot) => {
+            connectedEspId = snapshot.val();
+            if(connectedEspId) {
+                document.getElementById('current-esp-id').innerText = connectedEspId;
+                listenToDevice();
+            }
+        });
+    }
+
+    function listenToDevice() {
+        onValue(ref(db, `devices/${connectedEspId}/status`), (snapshot) => {
+            const status = snapshot.val() || "OFF";
+            const btn = document.getElementById('led-btn');
+            btn.innerText = (status === "ON") ? "UGASI LED" : "UPALI LED";
+            btn.className = (status === "ON") ? "btn btn-danger btn-lg" : "btn btn-success btn-lg";
+            btn.dataset.status = status;
+        });
+
+        onValue(ref(db, `devices/${connectedEspId}/sensor_value`), (snapshot) => {
+            document.getElementById('sensor-val').innerText = snapshot.val() || "0";
+        });
+    }
+
+    window.toggleLED = () => {
+        const currentStatus = document.getElementById('led-btn').dataset.status;
+        const newStatus = (currentStatus === "ON") ? "OFF" : "ON";
+        update(ref(db, `devices/${connectedEspId}`), { status: newStatus });
+    };
+
+    window.requestSensorData = () => {
+        update(ref(db, `devices/${connectedEspId}`), { trigger_read: true });
+    };
+
+</script>
+</body>
+</html>
